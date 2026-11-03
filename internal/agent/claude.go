@@ -153,9 +153,15 @@ func (s *claudeSession) Send(ctx context.Context, r TurnRequest) (<-chan Update,
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	settings := map[string]any{"disableAllHooks": true, "autoMemoryEnabled": false, "disableClaudeAiConnectors": true, "permissions": map[string]any{"additionalDirectories": []string{s.config.ArtifactsPath, s.config.AgentPath}}, "sandbox": map[string]any{"enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false, "excludedCommands": []string{}, "filesystem": map[string]any{"allowWrite": []string{s.config.Workspace, s.config.ArtifactsPath, s.config.AgentPath}}, "network": map[string]any{"allowedDomains": []string{"*"}, "strictAllowlist": true}}}
+	tools := "Read,Edit,Write,Bash,Glob,Grep,WebFetch,WebSearch"
+	if s.config.RestrictNetwork {
+		// No web tools, and sandboxed commands may reach no domain at all.
+		tools = "Read,Edit,Write,Bash,Glob,Grep"
+		settings["sandbox"].(map[string]any)["network"] = map[string]any{"allowedDomains": []string{}, "strictAllowlist": true}
+	}
 	encoded, _ := json.Marshal(settings)
 	instructions := fmt.Sprintf("You are executing a Blux task in %s. Modify only this task workspace and %s and %s. Blux manages Git; do not commit, merge or push. Return results to the task and save deliverables in %s. Do not contact other people or services for messaging.\n%s", s.config.Workspace, s.config.ArtifactsPath, s.config.AgentPath, s.config.ArtifactsPath, s.config.AdditionalInstructions)
-	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--restricted", "--permission-mode", "dontAsk", "--permission-prompts", "none", "--tools", "Read,Edit,Write,Bash,Glob,Grep,WebFetch,WebSearch", "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep,WebFetch,WebSearch", "--disable-slash-commands", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`, "--settings", string(encoded), "--system-prompt-snapshot", "off", "--append-system-prompt", instructions, "--add-dir", s.config.ArtifactsPath, s.config.AgentPath}
+	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--restricted", "--permission-mode", "dontAsk", "--permission-prompts", "none", "--tools", tools, "--allowedTools", tools, "--disable-slash-commands", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`, "--settings", string(encoded), "--system-prompt-snapshot", "off", "--append-system-prompt", instructions, "--add-dir", s.config.ArtifactsPath, s.config.AgentPath}
 	if s.resume {
 		args = append(args, "--resume", s.id)
 	} else {

@@ -195,7 +195,7 @@ func (c Codex) open(ctx context.Context, config SessionConfig, resume bool) (_ S
 	params := map[string]any{
 		"cwd": config.Workspace, "approvalPolicy": "never", "sandbox": "workspace-write",
 		"config": map[string]any{
-			"sandbox_workspace_write.network_access": true,
+			"sandbox_workspace_write.network_access": !config.RestrictNetwork,
 			"sandbox_workspace_write.writable_roots": []string{config.ArtifactsPath, config.AgentPath},
 			// Request overrides are in-memory. Marking the canonical cwd here
 			// avoids app-server auto-persisting project trust into global config.
@@ -247,7 +247,7 @@ func (s *codexSession) sandboxPolicy() codexSandboxPolicy {
 	}
 	return codexSandboxPolicy{
 		Type: "workspaceWrite", WritableRoots: []string{s.config.ArtifactsPath, s.config.AgentPath},
-		NetworkAccess: true,
+		NetworkAccess: !s.config.RestrictNetwork,
 	}
 }
 
@@ -279,7 +279,7 @@ func (s *codexSession) validateThread() error {
 		}
 		return nil
 	}
-	if json.Unmarshal(thread.ApprovalPolicy, &approval) != nil || approval != "never" || thread.Sandbox.Type != "workspaceWrite" || !thread.Sandbox.NetworkAccess {
+	if json.Unmarshal(thread.ApprovalPolicy, &approval) != nil || approval != "never" || thread.Sandbox.Type != "workspaceWrite" || thread.Sandbox.NetworkAccess == s.config.RestrictNetwork {
 		return executionError("codex_sandbox_mismatch", "Codex 未采用要求的工作区沙箱、网络或无需审批配置。", nil)
 	}
 	expected := map[string]bool{s.config.Workspace: true, s.config.ArtifactsPath: true, s.config.AgentPath: true}

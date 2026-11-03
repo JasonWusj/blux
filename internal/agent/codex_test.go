@@ -57,15 +57,24 @@ func fakeCodex() {
 			if expected := os.Getenv("BLUX_FAKE_EFFORT"); expected != "" && cfg["model_reasoning_effort"] != expected {
 				os.Exit(25)
 			}
+			if expected := os.Getenv("BLUX_FAKE_NETWORK"); expected != "" && fmt.Sprint(cfg["sandbox_workspace_write.network_access"]) != expected {
+				os.Exit(27)
+			}
 			sandbox := "workspaceWrite"
 			if os.Getenv("BLUX_FAKE_MODE") == "unsafe" {
 				sandbox = "dangerFullAccess"
 			}
-			thread = map[string]any{"thread": map[string]any{"id": "native-thread", "status": map[string]string{"type": "idle"}}, "model": "test-model", "modelProvider": "test", "reasoningEffort": cfg["model_reasoning_effort"], "cwd": in.Params["cwd"], "approvalPolicy": in.Params["approvalPolicy"], "sandbox": map[string]any{"type": sandbox, "networkAccess": true, "writableRoots": cfg["sandbox_workspace_write.writable_roots"]}}
+			thread = map[string]any{"thread": map[string]any{"id": "native-thread", "status": map[string]string{"type": "idle"}}, "model": "test-model", "modelProvider": "test", "reasoningEffort": cfg["model_reasoning_effort"], "cwd": in.Params["cwd"], "approvalPolicy": in.Params["approvalPolicy"], "sandbox": map[string]any{"type": sandbox, "networkAccess": reportedNetwork(cfg), "writableRoots": cfg["sandbox_workspace_write.writable_roots"]}}
 			result = thread
 		case "turn/start":
 			if expected := os.Getenv("BLUX_FAKE_EFFORT"); expected != "" && in.Params["effort"] != expected {
 				os.Exit(26)
+			}
+			if expected := os.Getenv("BLUX_FAKE_NETWORK"); expected != "" {
+				policy, _ := in.Params["sandboxPolicy"].(map[string]any)
+				if fmt.Sprint(policy["networkAccess"]) != expected {
+					os.Exit(28)
+				}
 			}
 			result = map[string]any{"turn": map[string]string{"id": "native-turn", "status": "inProgress"}}
 			send(map[string]any{"id": in.ID, "result": result})
@@ -85,6 +94,17 @@ func fakeCodex() {
 		send(map[string]any{"id": in.ID, "result": result})
 	}
 }
+
+// reportedNetwork is what the fake claims the sandbox allows. It echoes the
+// request unless BLUX_FAKE_REPORT_NETWORK overrides it, which simulates a CLI
+// that ignores the requested restriction.
+func reportedNetwork(cfg map[string]any) any {
+	if forced := os.Getenv("BLUX_FAKE_REPORT_NETWORK"); forced != "" {
+		return forced == "true"
+	}
+	return cfg["sandbox_workspace_write.network_access"]
+}
+
 func TestCodexWireAndFailure(t *testing.T) {
 	exe, _ := os.Executable()
 	t.Setenv("BLUX_FAKE_CODEX", "1")
@@ -129,6 +149,70 @@ func TestCodexWireAndFailure(t *testing.T) {
 				t.Fatalf("%v %v", kinds, turnErr)
 			}
 		})
+	}
+}
+
+// A restricted session must ask Codex for no command network access, send the
+// matching per-turn policy, and still complete. The fake exits with a distinct
+// code if either request carries the wrong network value.
+func TestCodexRestrictNetworkIsRequestedAndAccepted(t *testing.T) {
+	exe, _ := os.Executable()
+	for _, restrict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restrict=%v", restrict), func(t *testing.T) {
+			t.Setenv("BLUX_FAKE_CODEX", "1")
+			t.Setenv("BLUX_FAKE_MODE", "ok")
+			t.Setenv("BLUX_FAKE_NETWORK", fmt.Sprint(!restrict))
+			root := t.TempDir()
+			for _, name := range []string{"code", "artifacts", "agent"} {
+				os.Mkdir(filepath.Join(root, name), 0700)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			session, err := (Codex{Binary: exe}).Start(ctx, SessionConfig{Workspace: filepath.Join(root, "code"), ArtifactsPath: filepath.Join(root, "artifacts"), AgentPath: filepath.Join(root, "agent"), RestrictNetwork: restrict})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close()
+			updates, err := session.Send(ctx, TurnRequest{TurnID: "turn-1", Prompt: "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshots := 0
+			for u := range updates {
+				if u.Err != nil {
+					t.Fatal(u.Err)
+				}
+				if u.Type == "message.snapshot" {
+					snapshots++
+				}
+			}
+			if snapshots == 0 {
+				t.Fatal("turn produced no output")
+			}
+		})
+	}
+}
+
+// If Codex reports network access that differs from what was requested, the
+// session must be refused rather than run with a weaker sandbox.
+func TestCodexRejectsNetworkThatDiffersFromRequest(t *testing.T) {
+	exe, _ := os.Executable()
+	t.Setenv("BLUX_FAKE_CODEX", "1")
+	t.Setenv("BLUX_FAKE_MODE", "ok")
+	t.Setenv("BLUX_FAKE_REPORT_NETWORK", "true")
+	root := t.TempDir()
+	for _, name := range []string{"code", "artifacts", "agent"} {
+		os.Mkdir(filepath.Join(root, name), 0700)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := (Codex{Binary: exe}).Start(ctx, SessionConfig{Workspace: filepath.Join(root, "code"), ArtifactsPath: filepath.Join(root, "artifacts"), AgentPath: filepath.Join(root, "agent"), RestrictNetwork: true})
+	if err == nil {
+		session.Close()
+		t.Fatal("accepted a session that reports network access although it was restricted")
+	}
+	if !strings.Contains(err.Error(), "沙箱") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

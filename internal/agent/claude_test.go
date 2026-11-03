@@ -45,10 +45,27 @@ func fakeClaude() {
 			Enabled     bool `json:"enabled"`
 			Fail        bool `json:"failIfUnavailable"`
 			Unsandboxed bool `json:"allowUnsandboxedCommands"`
+			Network     struct {
+				Domains []string `json:"allowedDomains"`
+				Strict  bool     `json:"strictAllowlist"`
+			} `json:"network"`
 		} `json:"sandbox"`
 	}
 	if json.Unmarshal([]byte(flags["--settings"]), &settings) != nil || !settings.DisableAllHooks || !settings.Sandbox.Enabled || !settings.Sandbox.Fail || settings.Sandbox.Unsandboxed {
 		os.Exit(21)
+	}
+	// BLUX_FAKE_NETWORK pins the exact tool list and domain allowlist the
+	// adapter must pass: "open" is the long-standing default, "restricted"
+	// removes web tools and every allowed domain.
+	switch os.Getenv("BLUX_FAKE_NETWORK") {
+	case "open":
+		if flags["--tools"] != "Read,Edit,Write,Bash,Glob,Grep,WebFetch,WebSearch" || flags["--allowedTools"] != flags["--tools"] || len(settings.Sandbox.Network.Domains) != 1 || settings.Sandbox.Network.Domains[0] != "*" || !settings.Sandbox.Network.Strict {
+			os.Exit(29)
+		}
+	case "restricted":
+		if flags["--tools"] != "Read,Edit,Write,Bash,Glob,Grep" || flags["--allowedTools"] != flags["--tools"] || len(settings.Sandbox.Network.Domains) != 0 || !settings.Sandbox.Network.Strict {
+			os.Exit(30)
+		}
 	}
 	id := ""
 	for i, arg := range os.Args {
@@ -118,6 +135,50 @@ func TestClaudePrintProtocolAndResume(t *testing.T) {
 		if err = s.Close(); err != nil || snapshots != 1 {
 			t.Fatal(err, snapshots)
 		}
+	}
+}
+
+// The default arguments must stay exactly as they were, and a restricted
+// session must drop web tools and allow no domains. The fake binary exits with
+// a distinct code when either contract is violated.
+func TestClaudeRestrictNetworkChangesToolsAndDomains(t *testing.T) {
+	exe, _ := os.Executable()
+	for _, restrict := range []bool{false, true} {
+		name, expect := "open", "open"
+		if restrict {
+			name, expect = "restricted", "restricted"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLUX_FAKE_CLAUDE", "1")
+			t.Setenv("BLUX_FAKE_MODE", "ok")
+			t.Setenv("BLUX_FAKE_NETWORK", expect)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			root := t.TempDir()
+			for _, n := range []string{"code", "artifacts", "agent"} {
+				os.Mkdir(filepath.Join(root, n), 0700)
+			}
+			s, err := (Claude{Binary: exe}).Start(ctx, SessionConfig{Workspace: filepath.Join(root, "code"), ArtifactsPath: filepath.Join(root, "artifacts"), AgentPath: filepath.Join(root, "agent"), RestrictNetwork: restrict})
+			if err != nil {
+				t.Fatal(err)
+			}
+			updates, err := s.Send(ctx, TurnRequest{TurnID: "turn-1", Prompt: "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshots := 0
+			for update := range updates {
+				if update.Err != nil {
+					t.Fatal(update.Err)
+				}
+				if update.Type == "message.snapshot" {
+					snapshots++
+				}
+			}
+			if err = s.Close(); err != nil || snapshots != 1 {
+				t.Fatal(err, snapshots)
+			}
+		})
 	}
 }
 

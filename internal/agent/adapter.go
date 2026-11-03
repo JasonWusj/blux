@@ -29,6 +29,9 @@ type SessionConfig struct {
 	ModelProvider          string
 	ArtifactsPath          string
 	AgentPath              string
+	// RestrictNetwork denies network access to commands the agent runs. The
+	// agent's own calls to its model provider are not affected.
+	RestrictNetwork bool
 }
 
 type TurnRequest struct {
