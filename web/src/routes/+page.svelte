@@ -18,6 +18,7 @@
   import ContextMeter from '$lib/components/blux/ContextMeter.svelte';
   import Conversation from '$lib/components/blux/Conversation.svelte';
   import FlowPanel from '$lib/components/blux/FlowPanel.svelte';
+  import Automations from '$lib/components/blux/Automations.svelte';
   import TaskSetup from '$lib/components/blux/TaskSetup.svelte';
   import { folderName, type ContextChoice } from '$lib/blux/context';
   import TaskWorkspace from '$lib/components/blux/TaskWorkspace.svelte';
@@ -43,7 +44,7 @@
   $: defaultWorkspaceWidth=wide?mainWidth/2:Math.min(720,shellWidth-36);
   $: actualWorkspaceWidth=Math.min(workspaceMax,Math.max(360,workspaceWidth||defaultWorkspaceWidth));
   $: sidebarMax=Math.max(208,Math.min(400,shellWidth-(workspaceOpen&&wide?740:380)));
-  $: taskWorkspaceVisible=workspaceOpen&&!!$state.selectedId&&!!$state.detail&&!collaborationView&&!projectsView&&!flowView;
+  $: taskWorkspaceVisible=workspaceOpen&&!!$state.selectedId&&!!$state.detail&&!collaborationView&&!projectsView&&!flowView&&!automationView;
   function saveWidths(){try{localStorage.setItem('blux-panel-widths',JSON.stringify({sidebar:sidebarWidth,workspace:workspaceWidth}));}catch{/* Keep session widths. */}}
   let dark = false;
   let deletionTarget:DeletionTarget|null=null;let deletedCollaborations=new Set<string>();let deletedTaskIDs=new Set<string>();
@@ -55,15 +56,17 @@
   let promptTaskId: string | null = null;
   let localError = '';
   let newAdapter: AgentAdapter = 'codex';
- let flowView=false;let managerView=false;let collaborationView=false;let projectsView=false;
+ let flowView=false;let managerView=false;let collaborationView=false;let projectsView=false;let automationView=false;let automationUnread=0;
+ async function refreshAutomationUnread(){try{const v=await request<{unread:number}>('/inbox/unread');automationUnread=v.unread;}catch{/* The badge simply keeps its last value. */}}
  let collaborations:Collaboration[]=[];let agents:AgentInfo[]=[];let selectedCollaboration='';let createCollaborationRequest=0;
  let collaborationError='';let collaborationsReady=false;let refreshingCollaborations=false;
  async function refreshCollaborations(){if(refreshingCollaborations)return;refreshingCollaborations=true;const ticket=collaborationEpoch;try{const data=await request<{collaborations:Collaboration[]}>('/collaborations');if(ticket!==collaborationEpoch)return;collaborations=data.collaborations.filter(c=>!deletedCollaborations.has(c.id)).map(c=>({...c,tasks:c.tasks.filter(t=>!deletedTaskIDs.has(t.id))}));collaborationError='';}catch(e){collaborationError=errorText(e);}finally{collaborationsReady=true;refreshingCollaborations=false;}}
  function writeView(view:string,id=''){const url=new URL(window.location.href);url.searchParams.delete('task');url.searchParams.delete('view');url.searchParams.delete('collaboration');if(view==='collaborations')url.searchParams.set('collaboration',id||'all');else if(view!=='tasks')url.searchParams.set('view',view);if(url.href!==window.location.href)pushState(url,{});}
- function openCollaboration(id=''){controller.selectTask(null,false);collaborationView=true;projectsView=false;flowView=false;managerView=false;setupOpen=false;selectedCollaboration=id;writeView('collaborations',id);void refreshCollaborations();}
- function openProjects(){controller.selectTask(null,false);collaborationView=false;projectsView=true;flowView=false;managerView=false;setupOpen=false;writeView('projects');}
- function openProject(path:string){repositoryPath=path;controller.selectTask(null,false);collaborationView=false;projectsView=false;flowView=false;managerView=false;setupOpen=false;writeView('tasks');prompt='';selectedContexts=[];}
- function navigationFromURL(){const params=new URLSearchParams(location.search);collaborationView=!params.has('task')&&params.has('collaboration');selectedCollaboration=collaborationView&&params.get('collaboration')!=='all'?params.get('collaboration')||'':'';projectsView=!params.has('task')&&params.get('view')==='projects';flowView=!params.has('task')&&params.get('view')==='flow';}
+ function openCollaboration(id=''){controller.selectTask(null,false);collaborationView=true;projectsView=false;flowView=false;automationView=false;managerView=false;setupOpen=false;selectedCollaboration=id;writeView('collaborations',id);void refreshCollaborations();}
+ function openProjects(){controller.selectTask(null,false);collaborationView=false;projectsView=true;flowView=false;automationView=false;managerView=false;setupOpen=false;writeView('projects');}
+ function openProject(path:string){repositoryPath=path;controller.selectTask(null,false);collaborationView=false;projectsView=false;flowView=false;automationView=false;managerView=false;setupOpen=false;writeView('tasks');prompt='';selectedContexts=[];}
+ function navigationFromURL(){const params=new URLSearchParams(location.search);collaborationView=!params.has('task')&&params.has('collaboration');selectedCollaboration=collaborationView&&params.get('collaboration')!=='all'?params.get('collaboration')||'':'';projectsView=!params.has('task')&&params.get('view')==='projects';flowView=!params.has('task')&&params.get('view')==='flow';automationView=!params.has('task')&&params.get('view')==='automations';}
+ function openAutomations(){controller.selectTask(null,false);collaborationView=false;projectsView=false;flowView=false;managerView=false;setupOpen=false;automationView=true;writeView('automations');void refreshAutomationUnread();}
 
  const mode='explore';let selectedContexts:ContextChoice[]=[];
   $: contextIDs=selectedContexts.map(entry=>entry.id);
@@ -117,13 +120,13 @@
   $: if(modelScope!==`${$state.selectedId||''}:${adapter}`){modelScope=`${$state.selectedId||''}:${adapter}`;selectedModel='';selectedProvider='';selectedEffort='';}
   $: currentModel=$state.detail?.turns.at(-1)?.model||$state.detail?.session.runtime?.model||'';
  $: currentEffort=$state.detail?.turns.at(-1)?.reasoning_effort||$state.detail?.session.runtime?.reasoning_effort||'';
- $: activeSection=collaborationView||flowView?'collaborations':projectsView?'projects':'tasks';
+ $: activeSection=collaborationView||flowView?'collaborations':projectsView?'projects':automationView?'automations':'tasks';
   $: if (configReady) {
     try { localStorage.setItem('blux-task-config', JSON.stringify({ adapter: newAdapter, repository_path: repositoryPath })); } catch { /* Keep the selection for this visit. */ }
   }
   onMount(() => {
-    const cleanup = controller.start();navigationFromURL();void refreshCollaborations();void request<{agents:AgentInfo[]}>('/agents').then(v=>agents=v.agents).catch(()=>{});
-    const collaborationTimer=setInterval(()=>void refreshCollaborations(),5000);window.addEventListener('popstate',navigationFromURL);
+    const cleanup = controller.start();navigationFromURL();void refreshCollaborations();void refreshAutomationUnread();void request<{agents:AgentInfo[]}>('/agents').then(v=>agents=v.agents).catch(()=>{});
+    const collaborationTimer=setInterval(()=>{void refreshCollaborations();void refreshAutomationUnread();},5000);window.addEventListener('popstate',navigationFromURL);
     const wideQuery=window.matchMedia('(min-width: 1180px)');wide=wideQuery.matches;const onWide=(event:MediaQueryListEvent)=>wide=event.matches;wideQuery.addEventListener('change',onWide);
     const query = window.matchMedia('(max-width: 767px)');
     mobile = query.matches;
@@ -153,7 +156,7 @@
   }
 
   function selectTask(id: string | null) {
- flowView=false;managerView=false;collaborationView=false;projectsView=false;
+ flowView=false;managerView=false;collaborationView=false;projectsView=false;automationView=false;
     if ($state.submitting) return;
     if(id===null){controller.selectTask(null,false);writeView('tasks');}else controller.selectTask(id);
     localError = '';
@@ -201,11 +204,11 @@
 <div bind:this={shell} class="workbench-shell" class:sidebar-collapsed={!sidebarOpen} style={`--sidebar-width:${sidebarWidth}px;--workspace-width:${actualWorkspaceWidth}px;`}>
   <Sidebar bind:open={sidebarOpen} {mobile} width={sidebarWidth} maxWidth={sidebarMax} onResize={width=>sidebarWidth=width} onResizeEnd={saveWidths} onDelete={target=>deletionTarget=target} onPin={target=>void togglePin(target)} {pinning} tasks={$state.tasks}
     selectedId={$state.selectedId} loading={$state.tasksLoading}
-    error={$state.tasksError} submitting={$state.submitting} onSelect={selectTask} {collaborations} selectedCollaboration={selectedCollaboration} section={activeSection} onCollaboration={openCollaboration} onCreateCollaboration={()=>{openCollaboration('');createCollaborationRequest++;}} onProjects={openProjects}
+    error={$state.tasksError} submitting={$state.submitting} onSelect={selectTask} {collaborations} selectedCollaboration={selectedCollaboration} section={activeSection} onCollaboration={openCollaboration} onCreateCollaboration={()=>{openCollaboration('');createCollaborationRequest++;}} onProjects={openProjects} onAutomations={openAutomations} {automationUnread}
     onManager={()=>{openProject(repositoryPath);prompt='';localError='';managerView=true;}} onDeliveries={()=>openCollaboration('')} onRefresh={() => controller.refresh()} onToggleTheme={toggleTheme} {dark} />
   <main class="workbench-main" class:has-task-workspace={taskWorkspaceVisible}>
-    {#if !mobile&&!sidebarOpen&&(collaborationView||projectsView)}<button class="workspace-sidebar-toggle ui-icon-button" class:list-toggle={projectsView||!selectedCollaboration} aria-label="打开侧栏" on:click={()=>sidebarOpen=true}><SidebarIcon className="size-5"/></button>{/if}
-    <header class="chat-navbar" class:workspace-header-hidden={collaborationView||projectsView}>
+    {#if !mobile&&!sidebarOpen&&(collaborationView||projectsView||automationView)}<button class="workspace-sidebar-toggle ui-icon-button" class:list-toggle={projectsView||!selectedCollaboration} aria-label="打开侧栏" on:click={()=>sidebarOpen=true}><SidebarIcon className="size-5"/></button>{/if}
+    <header class="chat-navbar" class:workspace-header-hidden={collaborationView||projectsView||automationView}>
       <div class="navbar-left">
         {#if !sidebarOpen || mobile}
           <Tooltip content="打开侧栏" className="flex">
@@ -214,8 +217,9 @@
             </button>
           </Tooltip>
         {/if}
-        <h1 class="navbar-task-title" title={currentTask?.title}>{collaborationView?'Agent 协作':projectsView?'个人项目':flowView?'流程交付':managerView?'管家':currentTask?.title || '新任务'}</h1>
-        {#if !flowView&&!collaborationView&&!projectsView}
+        <h1 class="navbar-task-title" title={currentTask?.title}>{collaborationView?'Agent 协作':projectsView?'个人项目':automationView?'自动化':flowView?'流程交付':managerView?'管家':currentTask?.title || '新任务'}</h1>
+        {#if !flowView&&!collaborationView&&!projectsView&&!automationView}
+          {#if $state.detail?.task.automation_id}<button class="back-to-collaboration" on:click={openAutomations}>返回自动化</button>{/if}
           {#if $state.detail?.collaboration_id}<button class="back-to-collaboration" on:click={()=>openCollaboration($state.detail!.collaboration_id!)}>返回协作</button>{/if}
           <button type="button" class="ui-icon-button task-settings-button" aria-label={!$state.selectedId&&!repositoryPath?'选择项目':'任务设置'} on:click={()=>setupOpen=true} disabled={$state.submitting||controlling}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6" stroke-linecap="round"/></svg>
@@ -246,6 +250,7 @@
     {#if pinError&&!$state.healthError}<div class="connection-banner" role="alert"><span>{pinError}</span><button on:click={()=>pinError=''}>关闭</button></div>{/if}
     {#if collaborationView}<Collaborations loadError={collaborationError} ready={collaborationsReady} list={collaborations} selectedID={selectedCollaboration} project={repositoryPath} {agents} onSelect={openCollaboration} onTask={(id)=>selectTask(id)} onDelete={target=>deletionTarget=target} onPin={target=>void togglePin(target)} {pinning} onRefresh={()=>void refreshCollaborations()} createRequested={createCollaborationRequest}/>
     {:else if projectsView}<Projects tasks={$state.tasks} {collaborations} onSelect={openProject} onChoose={()=>{openProject('');setupOpen=true;}}/>
+    {:else if automationView}<Automations {agents} project={repositoryPath} onTask={(id)=>selectTask(id)} onChanged={()=>void refreshAutomationUnread()}/>
     {:else if flowView}<FlowPanel project={repositoryPath} adapter="codex" {contextIDs} onSelectProject={()=>void selectProject()} onTask={(id)=>selectTask(id)}/>{:else}
     <div class="chat-and-details">
       <section class="chat-workspace" class:home-workspace={!$state.selectedId&&!managerView} aria-label="任务会话">

@@ -15,6 +15,7 @@ export interface CreateTaskOptions {
 export interface Task {
  pinned_at?:string;
  collaboration_id?:string;
+ automation_id?:string;
   id: string;
   title: string;
   prompt: string;
