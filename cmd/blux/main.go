@@ -39,13 +39,16 @@ func run(args []string, logger *slog.Logger) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Println("Blux " + version + " — 本地个人 Agent 工作台\n\n" +
 			"用法：\n  blux serve  [--addr 127.0.0.1:8787] [--data-dir ~/.blux] [--web-dir web/dist]\n" +
-			"  blux worker [--data-dir ~/.blux] [--codex-bin codex]\n" +
-			"  blux start|stop|status [--data-dir ~/.blux]\n  blux backup --output backup.zip [--data-dir ~/.blux]\n  blux mcp --project PATH [--data-dir ~/.blux]\n  blux replay --task TASK_ID [--data-dir ~/.blux]\n  blux repair-artifacts --task TASK_ID [--data-dir ~/.blux]\n  blux version\n\n" +
+			"  blux worker [--data-dir ~/.blux] [--codex-bin codex] [--concurrency 3] [--background-concurrency 1]\n" +
+			"  blux start|stop|status [--data-dir ~/.blux]\n  blux service install|uninstall|status [--data-dir ~/.blux] [--web-dir web/dist]   (macOS 常驻服务)\n  blux backup --output backup.zip [--data-dir ~/.blux]\n  blux mcp --project PATH [--data-dir ~/.blux]\n  blux replay --task TASK_ID [--data-dir ~/.blux]\n  blux repair-artifacts --task TASK_ID [--data-dir ~/.blux]\n  blux version\n\n" +
 			"网页服务和 Worker 分别启动，使用相同数据目录。执行器使用本机已有 CLI 配置。")
 		return nil
 	}
 	if args[0] == "start" || args[0] == "stop" || args[0] == "status" || args[0] == "backup" {
 		return lifecycle.Run(args, defaultDataDir())
+	}
+	if args[0] == "service" {
+		return lifecycle.RunService(args[1:], defaultDataDir())
 	}
 	if args[0] == "version" {
 		fmt.Println(version)
@@ -57,7 +60,7 @@ func run(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	dataDir := flags.String("data-dir", defaultDataDir(), "SQLite 与工作区目录")
 	var addr, webDir, taskID, project string
-	var concurrency int
+	var concurrency, backgroundConcurrency int
 	var timeout time.Duration
 	deepSeekBinary := os.Getenv("BLUX_DEEPSEEK_BIN")
 	geminiBinary := os.Getenv("BLUX_GEMINI_BIN")
@@ -80,7 +83,8 @@ func run(args []string, logger *slog.Logger) error {
 		flags.StringVar(&addr, "addr", "127.0.0.1:8787", "HTTP 监听地址")
 		flags.StringVar(&webDir, "web-dir", "web/dist", "构建后的前端目录")
 	case "worker":
-		flags.IntVar(&concurrency, "concurrency", 2, "同时执行任务数量")
+		flags.IntVar(&concurrency, "concurrency", 3, "同时执行任务数量")
+		flags.IntVar(&backgroundConcurrency, "background-concurrency", 1, "同时执行的自动化运行数量")
 		flags.DurationVar(&timeout, "timeout", 2*time.Hour, "单回合执行上限")
 	case "mcp":
 		flags.StringVar(&project, "project", "", "管家已选择的项目目录")
@@ -101,6 +105,9 @@ func run(args []string, logger *slog.Logger) error {
 	}
 	if args[0] == "worker" && (concurrency < 1 || concurrency > 32 || timeout <= 0) {
 		return errors.New("concurrency 必须为 1..32，timeout 必须大于 0")
+	}
+	if args[0] == "worker" && (backgroundConcurrency < 1 || backgroundConcurrency > concurrency) {
+		return errors.New("background-concurrency 必须在 1 到 concurrency 之间")
 	}
 	directory, err := filepath.Abs(*dataDir)
 	if err != nil {
@@ -161,7 +168,7 @@ func run(args []string, logger *slog.Logger) error {
 			return err
 		}
 		defer release()
-		w := &worker.Worker{Store: db, Concurrency: concurrency, Timeout: timeout, CodexBinary: codexBinary, ClaudeBinary: claudeBinary, DeepSeekBinary: deepSeekBinary, GeminiBinary: geminiBinary, DataDir: directory, ID: core.NewID("worker"), Logger: logger}
+		w := &worker.Worker{Store: db, Concurrency: concurrency, BackgroundConcurrency: backgroundConcurrency, Notify: platform.Notify, Timeout: timeout, CodexBinary: codexBinary, ClaudeBinary: claudeBinary, DeepSeekBinary: deepSeekBinary, GeminiBinary: geminiBinary, DataDir: directory, ID: core.NewID("worker"), Logger: logger}
 		return w.Run(ctx)
 	case "replay":
 		if err := db.Replay(ctx, taskID); err != nil {

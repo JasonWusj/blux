@@ -25,7 +25,8 @@ func Run(args []string, defaultData string) error {
 		defaultCodex = "codex"
 	}
 	binary := flags.String("codex-bin", defaultCodex, "Codex CLI 路径")
-	concurrency := flags.Int("concurrency", 2, "同时执行任务数")
+	concurrency := flags.Int("concurrency", 3, "同时执行任务数")
+	background := flags.Int("background-concurrency", 1, "同时执行的自动化运行数")
 	timeout := flags.Duration("timeout", 2*time.Hour, "单回合上限")
 	if e := flags.Parse(args[1:]); e != nil {
 		if errors.Is(e, flag.ErrHelp) {
@@ -71,7 +72,7 @@ func Run(args []string, defaultData string) error {
 		fmt.Println("备份已保存：" + *output)
 		return nil
 	case "start":
-		if *concurrency < 1 || *concurrency > 32 || *timeout <= 0 {
+		if *concurrency < 1 || *concurrency > 32 || *timeout <= 0 || *background < 1 || *background > *concurrency {
 			return errors.New("无效的并发或超时设置")
 		}
 		webPath, e := filepath.Abs(*web)
@@ -119,7 +120,7 @@ func Run(args []string, defaultData string) error {
 			}
 			argv := []string{"serve", "--data-dir", dir, "--addr", *addr, "--web-dir", webPath, "--codex-bin", *binary}
 			if name == "worker" {
-				argv = []string{"worker", "--data-dir", dir, "--codex-bin", *binary, "--concurrency", fmt.Sprint(*concurrency), "--timeout", timeout.String()}
+				argv = []string{"worker", "--data-dir", dir, "--codex-bin", *binary, "--concurrency", fmt.Sprint(*concurrency), "--background-concurrency", fmt.Sprint(*background), "--timeout", timeout.String()}
 			}
 			cmd := exec.Command(exe, argv...)
 			cmd.Stdout = log
