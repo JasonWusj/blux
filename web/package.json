@@ -1,0 +1,32 @@
+{
+  "name": "blux-open-webui",
+  "private": true,
+  "version": "0.1.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --host 127.0.0.1",
+    "build": "pnpm typecheck && vite build",
+    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "prepare": "svelte-kit sync",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.10.0",
+    "dompurify": "3.4.17",
+    "marked": "18.1.2",
+    "svelte": "5.57.3",
+    "tippy.js": "6.3.7"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.70.3",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@tailwindcss/typography": "0.5.20",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "26.6.6",
+    "svelte-check": "4.7.7",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  }
+}

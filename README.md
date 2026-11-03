@@ -1,0 +1,97 @@
+<p align="center">
+  <img src="web/static/favicon.svg" alt="Blux" width="80" />
+</p>
+
+<h1 align="center">Blux</h1>
+
+<p align="center">一个本地工作台，协作多个 Agent。</p>
+<p align="center">
+  <a href="#功能">功能</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#使用">使用</a> ·
+  <a href="#开发">开发</a>
+</p>
+
+Blux 将 Codex、Claude Code、DeepSeek Harness 和 Gemini CLI 放进同一个极简界面，让你分配任务、跟踪执行、查看产物，并在确认后将代码接收到项目。
+
+## 功能
+
+- **多 Agent 协作**：为不同 Agent 指派独立任务，共享已完成的产物版本。
+- **独立工作区**：支持任意项目目录，无需 Git 初始化或首次提交；执行前保存基线。
+- **模型控制**：选择 CLI 支持的模型和推理强度，查看上报的上下文用量。
+- **统一产物**：预览 Markdown、HTML、图片与源码，查看 diff、历史版本并下载文件。
+- **任务管理**：流式输出、续聊、停止、置顶和删除；通过 `/` 选择技能与资料。
+- **本地持久化**：SQLite 保存任务与事件，独立 Worker 执行任务，提供备份导出和本地 MCP。
+
+## 快速开始
+
+### 环境要求
+
+- Go **1.26.4+**、Node.js **22.12+**、pnpm 和 Git。
+- 至少一个已安装并配置好的 Agent CLI；管家功能使用 Codex。
+- 推荐 macOS。Windows 可构建运行，具体执行器受其原生平台支持限制。
+
+Blux 复用本机 CLI 的配置与凭据。模型请求由对应 CLI 发起。
+
+### 安装并启动
+
+```sh
+git clone https://github.com/starnighter/blux.git
+cd blux
+
+go mod download
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web build
+node scripts/build.mjs
+
+./bin/blux start --web-dir web/dist
+```
+
+打开 **[http://127.0.0.1:8787](http://127.0.0.1:8787)**。
+
+Windows PowerShell 使用 `.\bin\blux.exe start --web-dir web/dist` 启动。Claude Code 的 Windows 执行需要在 WSL2 环境运行 Blux。
+
+```sh
+./bin/blux status
+./bin/blux stop
+```
+
+## 使用
+
+1. **选择项目**：选择本地文件夹，查看当前 Git 分支；没有 Git 时显示“暂无”。
+2. **创建任务**：选择 Agent、模型及推理强度，输入目标开始执行。
+3. **协作交接**：创建协作并指派任务，已完成文件自动汇总至公共产物区；新任务使用创建时固定的产物版本。
+4. **检查结果**：在右侧工作区浏览文件、产物和代码变更，确认后点击接收。
+
+任务在独立工作区运行，公共产物同步不会自动改写源项目。Codex 使用原生工作区沙箱、允许联网、关闭逐命令审批。本地网页默认绑定 `127.0.0.1`，面向个人使用。
+
+### 数据与备份
+
+数据默认保存在 `~/.blux/`；可通过 `BLUX_DATA_DIR` 或 `--data-dir` 更改。网页服务与 Worker 应使用同一数据目录。
+
+```sh
+./bin/blux stop
+./bin/blux backup --output /absolute/path/blux-backup.zip
+```
+
+CLI 路径可通过 `BLUX_CODEX_BIN`、`BLUX_CLAUDE_BIN`、`BLUX_DEEPSEEK_BIN` 和 `BLUX_GEMINI_BIN` 指定。
+
+## 开发
+
+后端使用 Go + SQLite，前端使用 Svelte + TypeScript，并适配 Open WebUI 组件。
+
+```sh
+make setup
+make dev
+# http://127.0.0.1:5174
+```
+
+```sh
+go test -race ./...
+go vet ./...
+pnpm --dir web build
+```
+
+## 致谢
+
+前端使用 [Open WebUI](https://github.com/open-webui/open-webui) 的部分组件。来源与第三方许可证见 [UPSTREAM.md](web/UPSTREAM.md)；Agent 图标归各自权利人所有，来源见[图标说明](web/static/agents/SOURCES.md)。

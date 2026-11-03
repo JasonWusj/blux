@@ -1,0 +1,39 @@
+/bin/
+/web/node_modules/
+/web/dist/
+/web/.svelte-kit/
+/.blux/
+*.log
+.DS_Store
+*.tsbuildinfo
+/.playwright-cli/
+/output/playwright/
+
+__pycache__/
+
+# Local planning, conversations and development records
+/docs/
+/.codex/
+/AGENTS.md
+/notes/
+/transcripts/
+/.agents/
+
+# Generated output and runtime data
+/output/
+/coverage/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.pid
+*.zip
+*.patch
+
+# Local credentials and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key

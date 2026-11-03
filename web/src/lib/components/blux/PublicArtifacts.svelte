@@ -1,0 +1,29 @@
+<script lang="ts">
+ import {request,errorText} from '$lib/blux/api';import type {Collaboration,SharedSnapshot,SharedArtifact} from '$lib/blux/collaborations';import {agentName} from '$lib/blux/agents';import Markdown from './Markdown.svelte';import Select from './Select.svelte';import Icon from './Icon.svelte';
+ export let collaboration:Collaboration;export let snapshots:SharedSnapshot[]=[];export let taskFilter='';export let onTask:(id:string)=>void=()=>{};
+ let view='read';let selected='';let text='';let previewURL='';let error='';let loading=false;let requestID=0;let previous='';let accepting=false;let acceptKey='';let accepted='';let codeID='';let previousCode='';
+ $: scoped=snapshots.filter(v=>!taskFilter||v.task_id===taskFilter);
+ $: files=scoped.flatMap(v=>v.artifacts.map(a=>({...a,snapshot:v})));
+ $: if(!files.some(a=>a.id===selected)){selected=[...files].reverse().find(a=>a.path==='Spec.md')?.id||[...files].reverse().find(a=>/\.md$/i.test(a.path))?.id||files[0]?.id||'';}
+ $: file=files.find(a=>a.id===selected);
+ $: codeVersions=scoped.filter(v=>v.commit);
+ $: if(!codeVersions.some(v=>v.id===codeID))codeID=codeVersions.at(-1)?.id||'';
+ $: codeSnapshot=codeVersions.find(v=>v.id===codeID);
+ $: if(selected!==previous){previous=selected;text='';previewURL='';accepted='';error='';void load(file);}
+ async function load(a:(SharedArtifact&{snapshot:SharedSnapshot})|undefined){const id=++requestID;if(!a){loading=false;return};if(/\.(html?|svg|png|jpe?g|webp|gif)$/i.test(a.path)){previewURL=`/api/v1/previews/${a.snapshot.id}/${a.path.split('/').map(encodeURIComponent).join('/')}`;loading=false;return};if(a.size>1024*1024){error='文件超过预览大小，请下载查看。';loading=false;return};loading=true;try{const r=await fetch(`/api/v1/artifacts/${a.id}/content`);if(!r.ok)throw new Error('无法读取产物');const t=await r.text();if(id===requestID)text=t;}catch(e){if(id===requestID)error=errorText(e)}finally{if(id===requestID)loading=false}}
+ async function accept(v:SharedSnapshot){if(accepting)return;accepting=true;error='';if(!acceptKey)acceptKey=crypto.randomUUID();try{const a=await request<{status:string;reason:string;integration_path:string}>(`/snapshots/${v.id}/accept`,{method:'POST',headers:{'Idempotency-Key':acceptKey}});accepted=a.status==='accepted'?'已接收到项目':`${a.reason} ${a.integration_path}`;acceptKey='';}catch(e){error=errorText(e)}finally{accepting=false}}
+ $: if(codeID!==previousCode){previousCode=codeID;acceptKey='';accepted='';}
+</script>
+<section class="public-artifacts" aria-label="公共产物区">
+ <div class="public-toolbar"><div class="artifact-view-tabs" role="group" aria-label="产物视图"><button class:active={view==='read'} aria-pressed={view==='read'} on:click={()=>view='read'}><Icon name="file" size={15}/>阅读</button><button class:active={view==='files'} aria-pressed={view==='files'} on:click={()=>view='files'}><Icon name="folder" size={15}/>文件 <span>{files.length}</span></button><button class:active={view==='diff'} aria-pressed={view==='diff'} on:click={()=>view='diff'}><Icon name="code" size={15}/>代码变更</button></div>{#if files.length||codeVersions.some(v=>v.diff)}<span class="public-sync-label"><i></i>已自动同步</span>{/if}</div>
+ {#if error}<div class="inline-error" role="alert">{error}</div>{/if}
+ {#if view==='files'}
+  {#if files.length}<div class="shared-file-list"><div class="shared-file-head"><span>文件名称</span><span>来源任务 / Agent</span><span>大小</span></div>{#each files as a}<div class="shared-file-row"><button on:click={()=>{selected=a.id;view='read'}}><Icon name="file" size={17}/><span>{a.path}</span></button><span>{a.snapshot.task_title}<small>{agentName(a.snapshot.adapter)} · {new Date(a.created_at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</small></span><a href={`/api/v1/artifacts/${a.id}/content`} aria-label={`下载${a.path}`}>{Math.max(1,Math.ceil(a.size/1024))} KB <Icon name="download" size={14}/></a></div>{/each}</div>{:else}<div class="public-empty"><Icon name="folder" size={28}/><h3>暂无公共产物</h3><p>添加 Agent 任务，完成后自动同步结果。</p></div>{/if}
+ {:else if view==='diff'}
+  {#if scoped.some(v=>v.commit)}<div class="public-document-bar"><Select ariaLabel="代码版本" bind:value={codeID} options={codeVersions.map(v=>({value:v.id,label:`${v.task_title} · ${agentName(v.adapter)} · ${v.commit.slice(0,8)}`}))}/>{#if codeSnapshot&&collaboration.tasks.find(t=>t.id===codeSnapshot.task_id)?.status==='completed'}<button class="subtle-button" disabled={accepting} on:click={()=>void accept(codeSnapshot!)}>{accepting?'接收中…':'接收此任务代码'}</button>{/if}</div><pre class="public-code-diff">{codeSnapshot?.diff||'此版本没有代码变更'}</pre>{#if accepted}<p class="public-acceptance" role="status">{accepted}</p>{/if}{:else}<div class="public-empty"><Icon name="code" size={28}/><h3>还没有代码变更</h3></div>{/if}
+ {:else if file}
+  <div class="public-document-bar"><Select ariaLabel="公共产物文件" bind:value={selected} options={files.map(a=>({value:a.id,label:`${a.path} · ${a.snapshot.task_title} · ${a.hash.slice(0,6)}`}))}/><a class="public-download" href={`/api/v1/artifacts/${file.id}/content`} aria-label="下载当前产物"><Icon name="download" size={17}/></a></div>
+  <div class="public-document-meta"><button on:click={()=>onTask(file!.task_id)}>{file.snapshot.task_title}</button><span>{agentName(file.snapshot.adapter)} · {new Date(file.created_at).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span><span>版本 {file.hash.slice(0,8)}</span></div>
+  {#if loading}<p class="public-loading">正在读取产物…</p>{:else if previewURL}<iframe class="public-preview-frame" title={file.path} src={previewURL} sandbox="allow-scripts"></iframe>{:else if /\.md$/i.test(file.path)}<article class="public-markdown"><Markdown content={text}/></article>{:else}<pre class="public-text-preview">{text}</pre>{/if}
+ {:else}<div class="public-empty"><Icon name="file" size={28}/><h3>{taskFilter?'此任务暂无产物':'暂无公共产物'}</h3><p>任务完成后自动同步产物。</p></div>{/if}
+</section>

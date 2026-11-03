@@ -1,0 +1,3 @@
+CREATE TABLE snapshots(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,turn_id TEXT NOT NULL UNIQUE,generation INTEGER NOT NULL,commit_id TEXT NOT NULL,diff TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE artifact_versions(id TEXT PRIMARY KEY,snapshot_id TEXT NOT NULL REFERENCES snapshots(id),task_id TEXT NOT NULL,turn_id TEXT NOT NULL,path TEXT NOT NULL,hash TEXT NOT NULL,size INTEGER NOT NULL,mime TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(snapshot_id,path));
+CREATE TABLE acceptances(id TEXT PRIMARY KEY,snapshot_id TEXT NOT NULL,task_id TEXT NOT NULL,status TEXT NOT NULL,source_head TEXT NOT NULL DEFAULT '',result_commit TEXT NOT NULL DEFAULT '',integration_path TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL);

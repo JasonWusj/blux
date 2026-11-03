@@ -1,0 +1,1 @@
+{"id":"development","name":"开发测试","version":1,"instructions":"根据冻结的需求版本完成编码和行为验证。记录修改、运行方式、验证结果和限制到产物目录的 Implementation.md。使用提供的 Spec 精确版本；不要自行替换或改变验收标准。"}
