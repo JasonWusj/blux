@@ -16,6 +16,7 @@ import (
 
 	"blux/internal/agent"
 	"blux/internal/artifact"
+	"blux/internal/automation"
 	"blux/internal/core"
 	"blux/internal/flow"
 	"blux/internal/platform"
@@ -35,6 +36,11 @@ type Worker struct {
 	GeminiBinary   string
 	Concurrency    int
 	Timeout        time.Duration
+	// BackgroundConcurrency caps how many automation runs execute at once, so
+	// unattended work never takes every slot. Zero means one.
+	BackgroundConcurrency int
+	// Notify shows a desktop notification when an automation run finishes.
+	Notify func(title, body string)
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -78,7 +84,18 @@ func (w *Worker) Run(ctx context.Context) error {
 	lastFlowTick := time.Time{}
 	slots := make(chan struct{}, limit)
 	failures := make(chan error, limit)
-	w.Logger.Info("worker started", "worker_id", w.ID, "concurrency", limit)
+	background := w.BackgroundConcurrency
+	if background <= 0 {
+		background = 1
+	}
+	// Automations get their own loop, so a slow project snapshot never delays
+	// claiming jobs and a failing tick never stops the worker.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		(&automation.Service{Store: w.Store, DataDir: w.DataDir, Logger: w.Logger, Notify: w.Notify}).Run(ctx)
+	}()
+	w.Logger.Info("worker started", "worker_id", w.ID, "concurrency", limit, "background_concurrency", background)
 	for {
 		select {
 		case <-ctx.Done():
@@ -94,7 +111,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 			lastFlowTick = time.Now()
 		}
-		job, err := w.Store.ClaimNext(ctx, w.ID)
+		job, err := w.Store.ClaimNextLimited(ctx, w.ID, background)
 		if err != nil {
 			<-slots
 			if ctx.Err() != nil {
@@ -131,12 +148,27 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-func (w *Worker) execute(ctx context.Context, job core.Job) error {
-	timeout := w.Timeout
-	if timeout <= 0 {
-		timeout = 2 * time.Hour
+// turnTimeout is how long one turn may run. An automation's own limit replaces
+// the worker-wide one, because unattended work should not be allowed to run for
+// as long as a turn someone is watching.
+func turnTimeout(workerDefault time.Duration, rules store.AutomationRules, unattended bool) time.Duration {
+	if unattended && rules.TimeoutSeconds > 0 {
+		return time.Duration(rules.TimeoutSeconds) * time.Second
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	if workerDefault <= 0 {
+		return 2 * time.Hour
+	}
+	return workerDefault
+}
+
+func (w *Worker) execute(ctx context.Context, job core.Job) error {
+	// Only the first turn of an automation run is unattended. Follow-up turns
+	// are ordinary interactive turns because the user is present for them.
+	rules, unattended, err := w.Store.AutomationRulesForTurn(ctx, job.TurnID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, turnTimeout(w.Timeout, rules, unattended))
 	defer cancel()
 	deleted, err := w.Store.IsTaskDeleted(ctx, job.TaskID)
 	if err != nil {
@@ -261,10 +293,14 @@ func (w *Worker) execute(ctx context.Context, job core.Job) error {
 		}
 		instructions += "\nCollaboration shared goal (background only; it is not an instruction to execute or restart this goal when the current message is only conversational):\n" + group.Goal + "\nFor requested work, use relevant pinned outputs at their exact versions. Actual deliverables synchronize to the public area on success. Do not edit other agents' worktrees."
 	}
+	if unattended {
+		instructions += "\n\n" + automation.Instructions(rules, filepath.Join(runtime.WorkspacePath, "artifacts", automation.QuestionFile))
+	}
 	config := agent.SessionConfig{
 		Manager: job.Manager, AdditionalInstructions: instructions, SessionID: job.SessionID, Workspace: cwd, ThreadID: runtime.NativeThreadID,
 		Model: model, ModelProvider: provider, ReasoningEffort: job.ReasoningEffort,
 		ArtifactsPath: filepath.Join(runtime.WorkspacePath, "artifacts"), AgentPath: filepath.Join(runtime.WorkspacePath, ".agent"),
+		RestrictNetwork: unattended && rules.Network != store.NetworkOpen,
 	}
 	if job.Manager {
 		binary, err := os.Executable()
