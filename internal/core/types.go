@@ -63,6 +63,7 @@ type CreateTurnInput struct {
 type Task struct {
 	PinnedAt        string `json:"pinned_at,omitempty"`
 	CollaborationID string `json:"collaboration_id,omitempty"`
+	AutomationID    string `json:"automation_id,omitempty"`
 	ID              string `json:"id"`
 	Title           string `json:"title"`
 	Prompt          string `json:"prompt"`

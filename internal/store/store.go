@@ -62,7 +62,10 @@ var deletionMigration string
 //go:embed migrations/014_pins.sql
 var pinsMigration string
 
-const SchemaVersion = 14
+//go:embed migrations/015_automations.sql
+var automationsMigration string
+
+const SchemaVersion = 15
 
 type Store struct{ db *sql.DB }
 
@@ -115,7 +118,7 @@ func Open(path string) (*Store, error) {
 				return err
 			}
 			if version > SchemaVersion {
-				return fmt.Errorf("database schema version %d is newer than supported version 9", version)
+				return fmt.Errorf("database schema version %d is newer than supported version %d", version, SchemaVersion)
 			}
 			if version == 0 {
 				if _, err := q.ExecContext(initializationCtx, initialMigration); err != nil {
@@ -229,6 +232,14 @@ func Open(path string) (*Store, error) {
 					return err
 				}
 				if _, err := q.ExecContext(initializationCtx, "PRAGMA user_version = 14"); err != nil {
+					return err
+				}
+			}
+			if version < 15 {
+				if _, err := q.ExecContext(initializationCtx, automationsMigration); err != nil {
+					return err
+				}
+				if _, err := q.ExecContext(initializationCtx, "PRAGMA user_version = 15"); err != nil {
 					return err
 				}
 			}
@@ -631,13 +642,13 @@ func queueTurn(ctx context.Context, q querier, taskID, sessionID, turnID, prompt
 	return err
 }
 
-const taskColumns = "id,title,prompt,status,adapter,session_id,current_turn_id,created_at,updated_at,last_event_seq,repository_path,base_commit,model,model_provider,COALESCE((SELECT collaboration_id FROM collaboration_tasks ct WHERE ct.task_id=tasks.id),''),COALESCE((SELECT pinned_at FROM pins WHERE kind='task' AND entity_id=tasks.id),'')"
+const taskColumns = "id,title,prompt,status,adapter,session_id,current_turn_id,created_at,updated_at,last_event_seq,repository_path,base_commit,model,model_provider,COALESCE((SELECT collaboration_id FROM collaboration_tasks ct WHERE ct.task_id=tasks.id),''),COALESCE((SELECT pinned_at FROM pins WHERE kind='task' AND entity_id=tasks.id),''),COALESCE((SELECT automation_id FROM automation_runs ar WHERE ar.task_id=tasks.id),'')"
 
 type scanner interface{ Scan(...any) error }
 
 func scanTask(row scanner) (core.Task, error) {
 	var t core.Task
-	err := row.Scan(&t.ID, &t.Title, &t.Prompt, &t.Status, &t.Adapter, &t.SessionID, &t.CurrentTurnID, &t.CreatedAt, &t.UpdatedAt, &t.LastEventSeq, &t.RepositoryPath, &t.BaseCommit, &t.Model, &t.ModelProvider, &t.CollaborationID, &t.PinnedAt)
+	err := row.Scan(&t.ID, &t.Title, &t.Prompt, &t.Status, &t.Adapter, &t.SessionID, &t.CurrentTurnID, &t.CreatedAt, &t.UpdatedAt, &t.LastEventSeq, &t.RepositoryPath, &t.BaseCommit, &t.Model, &t.ModelProvider, &t.CollaborationID, &t.PinnedAt, &t.AutomationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = core.ErrNotFound
 	}

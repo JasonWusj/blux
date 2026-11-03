@@ -76,6 +76,14 @@ func (s *Store) Events(ctx context.Context, taskID string, after int64, limit in
 }
 
 func (s *Store) ClaimNext(ctx context.Context, workerID string) (*core.Job, error) {
+	return s.ClaimNextLimited(ctx, workerID, 0)
+}
+
+// ClaimNextLimited claims the oldest eligible queued job. Jobs that start an
+// automation run are eligible only while fewer than backgroundLimit of them are
+// running, so unattended work cannot occupy every worker slot. A limit of zero
+// or less disables the cap.
+func (s *Store) ClaimNextLimited(ctx context.Context, workerID string, backgroundLimit int) (*core.Job, error) {
 	if workerID == "" {
 		return nil, fmt.Errorf("worker id required: %w", core.ErrInvalidState)
 	}
@@ -83,7 +91,7 @@ func (s *Store) ClaimNext(ctx context.Context, workerID string) (*core.Job, erro
 	err := s.transaction(ctx, func(q querier) error {
 		var j core.Job
 		var runtimeJSON string
-		err := q.QueryRowContext(ctx, `SELECT j.id,j.task_id,j.session_id,j.turn_id,j.generation,j.prompt,t.adapter,t.repository_path,t.base_commit,COALESCE(NULLIF(u.model,''),t.model),COALESCE(NULLIF(u.model_provider,''),t.model_provider),u.reasoning_effort,s.runtime_json,EXISTS(SELECT 1 FROM manager_tasks m WHERE m.task_id=j.task_id) FROM jobs j JOIN tasks t ON t.id=j.task_id JOIN turns u ON u.id=j.turn_id JOIN sessions s ON s.id=j.session_id WHERE j.status = 'queued' AND t.id NOT IN(SELECT task_id FROM deleted_tasks) ORDER BY j.created_at,j.id LIMIT 1`).Scan(&j.ID, &j.TaskID, &j.SessionID, &j.TurnID, &j.Generation, &j.Prompt, &j.Adapter, &j.RepositoryPath, &j.BaseCommit, &j.Model, &j.ModelProvider, &j.ReasoningEffort, &runtimeJSON, &j.Manager)
+		err := q.QueryRowContext(ctx, `SELECT j.id,j.task_id,j.session_id,j.turn_id,j.generation,j.prompt,t.adapter,t.repository_path,t.base_commit,COALESCE(NULLIF(u.model,''),t.model),COALESCE(NULLIF(u.model_provider,''),t.model_provider),u.reasoning_effort,s.runtime_json,EXISTS(SELECT 1 FROM manager_tasks m WHERE m.task_id=j.task_id) FROM jobs j JOIN tasks t ON t.id=j.task_id JOIN turns u ON u.id=j.turn_id JOIN sessions s ON s.id=j.session_id WHERE j.status = 'queued' AND t.id NOT IN(SELECT task_id FROM deleted_tasks) AND (?<=0 OR NOT EXISTS(SELECT 1 FROM automation_runs b WHERE b.turn_id=j.turn_id) OR (SELECT COUNT(*) FROM jobs r JOIN automation_runs a ON a.turn_id=r.turn_id WHERE r.status='running')<?) ORDER BY j.created_at,j.id LIMIT 1`, backgroundLimit, backgroundLimit).Scan(&j.ID, &j.TaskID, &j.SessionID, &j.TurnID, &j.Generation, &j.Prompt, &j.Adapter, &j.RepositoryPath, &j.BaseCommit, &j.Model, &j.ModelProvider, &j.ReasoningEffort, &runtimeJSON, &j.Manager)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
